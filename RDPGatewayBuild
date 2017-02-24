@@ -1,0 +1,123 @@
+#Create the meta configuration. Build the mof file that will configure the local configuration manager behavior
+[DSCLocalConfigurationManager()]
+Configuration LCMPUSH 
+{	
+	Node $Computername
+	{
+		Settings
+		{
+			AllowModuleOverwrite = $True
+            RebootNodeIfNeeded = $True
+            ActionAfterReboot = 'ContinueConfiguration'
+            ConfigurationMode = 'ApplyAndMonitor'
+			RefreshMode = 'Push'	
+		}
+	}
+}
+
+$Computername = 'mycomputer.fqdn'
+
+# Create the Computer.Meta.Mof in folder
+LCMPush -OutputPath C:\Temp
+
+
+#Apply the configuration to the destination LCM. The command looks for a MOF that has the defined computer in the variable.
+Set-DSCLocalConfigurationManager -ComputerName $computername -Path c:\temp –Verbose
+
+#Now the computer is ready to receve configurations.
+
+#Build a configuration to the target machine.
+
+Configuration RDSGTWServerBase {
+
+Import-DscResource -ModuleName 'Carbon', 'PSDesiredStateConfiguration'
+
+    Node $Computername {
+#Installs and ensure Remote Desktop Gateway Service and Tools are installed.
+         WindowsFeature Remote-Desktop-Services {
+            Name = 'RDS-Gateway'
+            IncludeAllSubFeature = $true
+            Ensure = 'Present'
+            }
+
+                WindowsFeature RemoteDesktopGatewayMMC {
+                    Name = 'RSAT-RDS-Gateway'
+                    IncludeAllSubFeature = $true
+                    Ensure = 'Present'
+                    }
+                WindowsFeature NetworkPolicyServiceMMC {
+                    Name = 'RSAT-NPAS'
+                    IncludeAllSubFeature = $true
+                    Ensure = 'Present'
+                    }
+
+#Creates properties used by the BGInfo Scheduled task. BGInfo task is created by User GPO.
+         Registry BGInfoVersion {
+            Key = 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\ImageVersion\'
+            Ensure = 'Present'
+            ValueName = 'CurrentVersion'
+            ValueData = 'DSC Commisioned'
+            ValueType = 'String'
+            }
+
+                 Registry BGInfoCSL {
+                    Key = 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\ImageVersion\'
+                    Ensure = 'Present'
+                    ValueName = 'CSLNumber'
+                    ValueData = '(***) ***-****'
+                    ValueType = 'String'
+                    }
+
+                 Registry BGInfoEmail {
+                    Key = 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\ImageVersion\'
+                    Ensure = 'Present'
+                    ValueName = 'Email'
+                    ValueData = '*@*.*'
+                    ValueType = 'String'
+                    }
+        Script CreateLocalDirectory {
+            TestScript = {
+               Test-Path -Path 'C:Temp', 'C:\Scripts' 
+                }
+            GetScript = {
+                Get-Content -path C:\
+                }
+            SetScript = {
+                Install-Directory -path 'C:Temp'
+                Install-Directory -path 'C:\Scripts'
+            }
+            
+        }
+        File CopyBGInfo {
+            Ensure = 'Present'
+            Type = 'Directory'
+            Checksum = 'SHA-256'
+            Recurse = $false
+            MatchSource = $True
+            Credential = $Credential
+            SourcePath = '\\remotecomputer.fqdn\BGInfo'
+            DestinationPath = 'C:\Windows\BGInfo'
+            }
+
+
+         File CopyProfileImage {
+            Ensure = 'Present'
+            Checksum = 'SHA-256'
+            MatchSource = $True
+            Force = $True
+            SourcePath = '\\remotecomputer.fqdn\BGInfo\user.bmp'
+            DestinationPath = 'C:\ProgramData\Microsoft\User Account Pictures\'
+
+            }
+        }
+
+        Unblock-File C:\Windows\BgInfo\BgInfo.exe
+    }
+
+    $computername = 'targetcomputer.fqdn'
+    & RDSGTWServerBase -OutputPath C:\Temp
+
+
+    #Apply DSC to localhost
+    Start-DscConfiguration -ComputerName $computer -Path c:\temp\ -Wait -Verbose
+    test-DscConfiguration -ComputerName $computer -Path c:\temp\  -Verbose
